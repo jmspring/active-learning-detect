@@ -3,8 +3,15 @@ import logging
 import azure.functions as func
 from shutil import copyfile
 from ..shared import db_access as DB_Access
+from ..shared import db_access_v2 as DB_Access_V2
+# from ..shared import db_provider
 
-# URL to blob storage for testing
+default_db_host = ""
+default_db_name = ""
+default_db_user = ""
+default_db_pass = ""
+
+# Testing URL for what will be permanent (destination) blob storage
 DESTINATION_DIRECTORY = "http://akaonboardingstorage.blob.core.windows.net/aka-testimagecontainer"
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -21,55 +28,46 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     logging.error(req_body)
 
-    # HttpResponse for testing that JSON URL list was received and parsed correctly
+    # Testing HttpResponse to show that JSON URL list was received and parsed correctly
+    # Note: If used, comment out all below this return line
     # return func.HttpResponse(url_string, status_code=200)
 
     # Build list of image objects to pass to DAL for insertion into DB.
     image_object_list = []
     image_name_list = []
-
     for url in url_list:
         # Split original image name from URL
         original_filename = url.split("/")[-1]
         image_name_list.append(original_filename)
-
         # Create ImageInfo object (def in db_access.py)
         # Note: For testing, default image height/width are set to 50x50
         image = DB_Access.ImageInfo(original_filename, url, 50, 50)
-
         # Append image object to the list
         image_object_list.append(image)
 
-    # Connect to DB
-    if(os.getenv("DB_HOST") is None or os.getenv("DB_USER") is None or os.getenv("DB_NAME") is None or os.getenv("DB_PASS") is None):
-        return func.HttpResponse("Please set environment variables for DB_HOST, DB_USER, DB_NAME, DB_PASS", status_code=400)
-    db = DB_Access.get_connection()
+    # Get database connection
+    db_config = DB_Access_V2.DatabaseInfo(os.getenv('DB_HOST', default_db_host), os.getenv('DB_NAME', default_db_name), os.getenv('DB_USER', default_db_user), os.getenv('DB_PASS', default_db_pass))
+    data_access = DB_Access_V2.ImageTagDataAccess(DB_Access_V2.PostGresProvider(db_config))
 
-    # Hand off list of image objects to DAL to create rows in database
-    # Receive dictionary of mapped { ImageID : ImageURL }
-    image_id_url_map = DB_Access.get_image_ids_for_new_images(db, image_object_list)
+    # Create user id
+    user_id = data_access.create_user(DB_Access_V2.getpass.getuser())
+    logging.info("The user id for '{0}' is {1}".format(DB_Access_V2.getpass.getuser(),user_id))
 
-    # Verify that images were added to database
-    added_images = []
-    cursor = db.cursor()
-    query = ("SELECT imageid, originalimagename FROM image_info WHERE a.originalimagename IN {0}")
-    cursor.execute(query.format(image_name_list))
-    for row in cursor:
-        added_images.append("ImageId: " + str(row[0]) + "\tOriginal Image Name: " + str(row[1]))
+    # Add new images to the database, and retrieve a dictionary ImageId's mapped to ImageUrl's
+    image_id_url_map = data_access.add_new_images(image_object_list,user_id)
 
-    # Construct response string
-    response_string = "Images added to database: " + "\n".join(added_images)
-
-    # Copy over images to permanent blob store, get list of URLs to images in permanent storage
+    # Copy over images to permanent blob store
+    permanent_url_list = []
     for key, value in image_id_url_map.items():
         file_extension = os.path.splitext(value)[1]
-        permanent_storage_directory = DESTINATION_DIRECTORY     # Test directory for now
-        permanent_storage_path = permanent_storage_directory + "/" + key + file_extension
+        permanent_storage_path = DESTINATION_DIRECTORY + "/" + key + file_extension
         copyfile(value, permanent_storage_path)
+        permanent_url_list.append(permanent_storage_path)
     logging.info("Done copying images to permanent blob storage.")
 
-    # Close connection to database.
-    db.close()
+    # Construct response string of permanent URLs
+    # TODO: Use update function from DAL to update image locations in DB
+    permanent_url_string = (", ".join(permanent_url_list))    # For testing output response
 
-    # Return list of images that were added to the database for verification
-    return func.HttpResponse(response_string, status_code=200)
+    # Return string containing list of URLs to images in permanent blob storage
+    return func.HttpResponse(permanent_url_string, status_code=200)
