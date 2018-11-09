@@ -1,15 +1,20 @@
 import os
 import logging
 import azure.functions as func
-from shutil import copyfile
+# TODO: Remove original db_access module
 from ..shared import db_access as DB_Access
 from ..shared import db_access_v2 as DB_Access_V2
-# from ..shared import db_provider
+from azure.storage.blob import BlockBlobService, ContentSettings
 
 default_db_host = ""
 default_db_name = ""
 default_db_user = ""
 default_db_pass = ""
+
+storage_account_name = ""
+storage_account_key = ""
+source_container_name = ""
+destination_container_name = ""
 
 # Testing URL for what will be permanent (destination) blob storage
 DESTINATION_DIRECTORY = "http://akaonboardingstorage.blob.core.windows.net/aka-testimagecontainer"
@@ -74,17 +79,38 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     # Copy over images to permanent blob store and save URLs in a list
     permanent_url_list = []
     update_urls_dictionary = {}
+
     for key, value in image_id_url_map.items():
-        image_url = key
+        original_image_url = key
+        original_filename = url.split("/")[-1]
         image_id = value
-        logging.info("Original image URL: " + image_url)
+        logging.info("Original image URL: " + original_image_url)
+        logging.info("Original image name: " + original_filename)
         logging.info("Image ID: " + str(image_id))
-        file_extension = os.path.splitext(image_url)[1]
+        file_extension = os.path.splitext(original_image_url)[1]
         logging.info("File extension: " + file_extension)
-        permanent_storage_path = DESTINATION_DIRECTORY + "/" + str(image_id) + file_extension
-        logging.info("Permanent storage destination path: " + permanent_storage_path)
+        new_blob_name = (str(image_id) + file_extension)
+        logging.info("New blob name: " + new_blob_name)
+        permanent_storage_path = DESTINATION_DIRECTORY + "/" + new_blob_name
         logging.info("Now copying file from temporary to permanent storage...")
-        copyfile(image_url, permanent_storage_path)
+        logging.info("Source URL: " + original_image_url)
+        logging.info("Destination URL: " + permanent_storage_path)
+
+        blob_service = BlockBlobService(account_name=storage_account_name, 
+                                    account_key=storage_account_key)
+        blob_name = original_filename
+        copy_from_container = source_container_name
+        copy_to_container = destination_container_name
+
+        blob_url = blob_service.make_blob_url(copy_from_container, blob_name)
+        # blob_url:https://demostorage.blob.core.windows.net/image-container/pretty.jpg
+
+        blob_service.copy_blob(copy_to_container, new_blob_name, blob_url)
+
+        # Delete the file from temp storage once it's been copied
+        # TODO: Test
+        # blob_service.delete_blob(copy_from_container, blob_name)
+
         logging.info("Done.")
         # Add image to the list of images to be returned in the response
         permanent_url_list.append(permanent_storage_path)

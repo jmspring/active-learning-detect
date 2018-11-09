@@ -12,9 +12,9 @@ print('-' * 40)
 # functionURL = "https://onboardinghttptrigger.azurewebsites.net/api/onboarding?code=lI1zl4IhiHcOcxTS85RsE7yZJXeNRxnr7tXSO1SrLWdpiN0W6hT3Jw=="
 functionURL = "http://localhost:7071/api/onboarding"
 
-urlList = { "imageUrls": ["http://www.whitneyway.com/Images/15/2017%20Puppies%20in%20Easter%20basket%204-16-17_800.JPG",
-                         "http://allpetcages.com/wp-content/uploads/2017/06/puppy-whelping-box.jpg",
-                         "http://78.media.tumblr.com/eea2f882ec08255e40cecaf8ca1d4543/tumblr_nmxjbjIK141qi4ucgo1_500.jpg"] }
+urlList = { "imageUrls": ["https://akaonboardingstorage.blob.core.windows.net/aka-temp-source-container/puppies1.jpg",
+                         "https://akaonboardingstorage.blob.core.windows.net/aka-temp-source-container/puppies2.jpg",
+                         "https://akaonboardingstorage.blob.core.windows.net/aka-temp-source-container/puppies3.jpg"] }
 
 headers = {"Content-Type": "application/json"}
 
