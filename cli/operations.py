@@ -2,12 +2,11 @@ import configparser
 import requests
 import time
 import os
-import uuid
 import shutil
 import pathlib
 import json
 import copy
-from azure.storage.blob import BlockBlobService
+from azure.storage.blob import BlockBlobService, ContentSettings
 
 FUNCTIONS_SECTION = 'FUNCTIONS'
 FUNCTIONS_KEY = 'FUNCTIONS_KEY'
@@ -53,6 +52,32 @@ def get_azure_storage_client(config):
     )
 
     return azure_storage_client
+
+
+def onboard(config, folder_name):
+    blob_storage = get_azure_storage_client(config)
+    uri = 'https://' + config.get("storage_account") + '.blob.core.windows.net/' + config.get("storage_container") + '/'
+    functions_url = config.get('url') + '/api/onboarding'
+    images = []
+    for image in os.listdir(folder_name):
+        if image.lower().endswith('.png') or image.lower().endswith('.jpg') or image.lower().endswith('.jpeg') or image.lower().endswith('.gif'):
+            local_path=os.path.join(folder_name, image)
+            print('Uploading image ' + image)
+
+            # Upload the created file, use image name for the blob name
+            blob_storage.create_blob_from_path(config.get("storage_container"), image, local_path, content_settings=ContentSettings(content_type='image/png'))
+            images.append(uri + image)
+    
+    # Post this data to the server to add them to database and kick off active learning
+    data = {}
+    data['imageUrls'] = images
+    headers = {'content-type': 'application/json'}
+    query = {
+        "code": config.get('key')
+    }
+
+    response = requests.post(functions_url, data=json.dumps(data), headers=headers, params=query)
+    print("Images successfully uploaded. \n" + response.text)
 
 
 def _download_bounds(num_images):
@@ -176,7 +201,7 @@ def upload(config):
         os.path.expanduser(config.get("tagging_location"))
     )
 
-    print("Uploading VOTT json file…")
+    print("Uploading VOTT json file...")
     vott_json = pathlib.Path(tagging_location / "data.json")
 
     with open(str(vott_json)) as json_file:
