@@ -56,18 +56,26 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     # Add new images to the database, and retrieve a dictionary ImageId's mapped to ImageUrl's
     image_id_url_map = data_access.add_new_images(image_object_list,user_id)
 
-    # Copy over images to permanent blob store
+    # Copy over images to permanent blob store and save URLs in a list
     permanent_url_list = []
     for key, value in image_id_url_map.items():
         file_extension = os.path.splitext(value)[1]
         permanent_storage_path = DESTINATION_DIRECTORY + "/" + key + file_extension
         copyfile(value, permanent_storage_path)
+        # Add image to the list of images to be returned in the response
         permanent_url_list.append(permanent_storage_path)
+        # Update the value in the dict to the new permanent storage URL
+        image_id_url_map[key] = permanent_storage_path
+
     logging.info("Done copying images to permanent blob storage.")
 
+    logging.info("Now updating permanent URLs in the DB...")
+    data_access.update_image_urls(image_id_url_map, user_id)
+    logging.info("Done.")
+
     # Construct response string of permanent URLs
-    # TODO: Use update function from DAL to update image locations in DB
-    permanent_url_string = (", ".join(permanent_url_list))    # For testing output response
+    permanent_url_string = (", ".join(permanent_url_list))
 
     # Return string containing list of URLs to images in permanent blob storage
-    return func.HttpResponse(permanent_url_string, status_code=200)
+    return func.HttpResponse("The following images should now be added to the DB and exist in permanent blob storage: " 
+        + permanent_url_string, status_code=200)
