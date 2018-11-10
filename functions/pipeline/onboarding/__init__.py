@@ -9,15 +9,15 @@ default_db_name = ""
 default_db_user = ""
 default_db_pass = ""
 
-# TODO: Make environment variables?
+# TODO: Make environment variables
 storage_account_name = ""
 storage_account_key = ""
 source_container_name = ""
 destination_container_name = ""
 
-# Testing URL for what will be permanent (destination) blob storage
-# TODO: Make environment variable
-DESTINATION_DIRECTORY = "http://akaonboardingstorage.blob.core.windows.net/aka-testimagecontainer"
+# TODO: Make environment variables
+SOURCE_CONTAINER_URL = "https://akaonboardingstorage.blob.core.windows.net/aka-temp-source-container"
+DESTINATION_CONTAINER_URL = "https://akaonboardingstorage.blob.core.windows.net/aka-temp-destination-container"
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
@@ -69,35 +69,47 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     permanent_url_list = []
     update_urls_dictionary = {}
 
+    # TODO: Add check to make sure image exists in temp storage before attempting these operations
     for key, value in image_id_url_map.items():
-        original_image_url = key
-        original_filename = url.split("/")[-1]
-        image_id = value
-        logging.info("Original image URL: " + original_image_url)
-        logging.info("Original image name: " + original_filename)
-        logging.info("Image ID: " + str(image_id))
-        file_extension = os.path.splitext(original_image_url)[1]
-        logging.info("File extension: " + file_extension)
-        new_blob_name = (str(image_id) + file_extension)
-        logging.info("New blob name: " + new_blob_name)
-        permanent_storage_path = DESTINATION_DIRECTORY + "/" + new_blob_name
-        logging.info("Now copying file from temporary to permanent storage...")
-        logging.info("Source URL: " + original_image_url)
-        logging.info("Destination URL: " + permanent_storage_path)
 
-        blob_service = BlockBlobService(account_name=storage_account_name, 
-                                    account_key=storage_account_key)
-        blob_name = original_filename
+        # Verbose logging for testing
+        logging.info("Key: " + key)
+        logging.info("Value: " + str(value))
+
+        original_image_url = key
+        original_blob_name = original_image_url.split("/")[-1]
+        file_extension = os.path.splitext(original_image_url)[1]
+        image_id = value
+        new_blob_name = (str(image_id) + file_extension)
+        permanent_storage_path = DESTINATION_CONTAINER_URL + "/" + new_blob_name
+
+        # Verbose logging for testing
+        logging.info("Original image URL: " + original_image_url)
+        logging.info("Original image name: " + original_blob_name)
+        logging.info("File extension: " + file_extension)
+        logging.info("Image ID: " + str(image_id))
+        logging.info("New blob name: " + new_blob_name)
+        logging.info("Now copying file from temporary to permanent storage...")
+        logging.info("Permanent image URL: " + permanent_storage_path)
+
+        blob_service = BlockBlobService(account_name=storage_account_name, account_key=storage_account_key)
         copy_from_container = source_container_name
         copy_to_container = destination_container_name
 
-        blob_url = blob_service.make_blob_url(copy_from_container, blob_name)
+        blob_url = blob_service.make_blob_url(copy_from_container, original_blob_name)
 
+        # TODO: Exception handling in case blob cannot be copied for some reason.
         blob_service.copy_blob(copy_to_container, new_blob_name, blob_url)
 
         # Delete the file from temp storage once it's been copied
-        # TODO: Test
-        # blob_service.delete_blob(copy_from_container, blob_name)
+        # TODO: Tested - produces errors.  Troubleshoot
+        # blob_service.delete_blob(copy_from_container, original_blob_name)
+
+        try:
+            blob_service.delete_blob(copy_from_container, original_blob_name)
+            print("Blob " + original_blob_name + " has been deleted successfully")
+        except:
+            print("Blob " + original_blob_name + " deletion failed")
 
         logging.info("Done.")
         # Add image to the list of images to be returned in the response
