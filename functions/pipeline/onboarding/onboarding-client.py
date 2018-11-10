@@ -3,14 +3,20 @@ import json
 import pg8000
 
 # The following mock client imitates the CLI during the onboarding scenario for new images.
-# The CLI uploads images to a temporary blob store, then gets a list of URLs to those images and
-# passes it to an HTTP trigger function, which calls the DAL to create rows in the database.
+# The expectation is that the CLI uploads images to a temporary blob store, then gets a list 
+# of URLs to those images and passes the list to an HTTP trigger function in the format of
+# a JSON string.  The HTTP trigger function creates rows in the database for the images,
+# retrieves the ImageId's for them, and then copies the images, each renamed as "ImageId.extension",
+# into a permanent blob storage container.  The HTTP function returns the list of URLs to
+# the images in permanent blob storage.
 
 print("\nTest client for CLI Onboarding scenario")
 print('-' * 40)
 
 # functionURL = "https://onboardinghttptrigger.azurewebsites.net/api/onboarding?code=lI1zl4IhiHcOcxTS85RsE7yZJXeNRxnr7tXSO1SrLWdpiN0W6hT3Jw=="
 functionURL = "http://localhost:7071/api/onboarding"
+# Sean's function URL:
+# functionURL = "https://onboardinghttptrigger.azurewebsites.net/api/onboarding?code=lI1zl4IhiHcOcxTS85RsE7yZJXeNRxnr7tXSO1SrLWdpiN0W6hT3Jw=="
 
 urlList = { "imageUrls": ["https://akaonboardingstorage.blob.core.windows.net/aka-temp-source-container/puppies1.jpg",
                          "https://akaonboardingstorage.blob.core.windows.net/aka-temp-source-container/puppies2.jpg",

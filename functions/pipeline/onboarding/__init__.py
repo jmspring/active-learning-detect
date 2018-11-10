@@ -1,8 +1,6 @@
 import os
 import logging
 import azure.functions as func
-# TODO: Remove original db_access module
-from ..shared import db_access as DB_Access
 from ..shared import db_access_v2 as DB_Access_V2
 from azure.storage.blob import BlockBlobService, ContentSettings
 
@@ -11,12 +9,14 @@ default_db_name = ""
 default_db_user = ""
 default_db_pass = ""
 
+# TODO: Make environment variables?
 storage_account_name = ""
 storage_account_key = ""
 source_container_name = ""
 destination_container_name = ""
 
 # Testing URL for what will be permanent (destination) blob storage
+# TODO: Make environment variable
 DESTINATION_DIRECTORY = "http://akaonboardingstorage.blob.core.windows.net/aka-testimagecontainer"
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -26,16 +26,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         req_body = req.get_json()
         logging.error(req.get_json())
         url_list = req_body["imageUrls"]
-        # url_string = (", ".join(url_list))    # For testing output response
     except ValueError:
         print("Unable to decode JSON body")
         return func.HttpResponse("Unable to decode POST body", status_code=400)
 
     logging.error(req_body)
-
-    # Testing HttpResponse to show that JSON URL list was received and parsed correctly
-    # Note: If used, comment out all below this return line
-    # return func.HttpResponse(url_string, status_code=200)
 
     # Build list of image objects to pass to DAL for insertion into DB.
     image_object_list = []
@@ -49,16 +44,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         image_name_list.append(original_filename)
         # Create ImageInfo object (def in db_access.py)
         # Note: For testing, default image height/width are set to 50x50
-        image = DB_Access.ImageInfo(original_filename, url, 50, 50)
+        # TODO: Figure out where actual height/width need to come from
+        image = DB_Access_V2.ImageInfo(original_filename, url, 50, 50)
         # Append image object to the list
         image_object_list.append(image)
-
-    # Get database connection
-    # Verbose logging for testing:
-    # logging.info("DB_HOST = " + os.getenv('DB_HOST'))
-    # logging.info("DB_NAME = " + os.getenv('DB_NAME'))
-    # logging.info("DB_USER = " + os.getenv('DB_USER'))
-    # logging.info("DB_PASS = " + os.getenv('DB_PASS'))
 
     logging.info("Now connecting to database...")
     db_config = DB_Access_V2.DatabaseInfo(os.getenv('DB_HOST', default_db_host), os.getenv('DB_NAME', default_db_name), os.getenv('DB_USER', default_db_user), os.getenv('DB_PASS', default_db_pass))
@@ -103,7 +92,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         copy_to_container = destination_container_name
 
         blob_url = blob_service.make_blob_url(copy_from_container, blob_name)
-        # blob_url:https://demostorage.blob.core.windows.net/image-container/pretty.jpg
 
         blob_service.copy_blob(copy_to_container, new_blob_name, blob_url)
 
