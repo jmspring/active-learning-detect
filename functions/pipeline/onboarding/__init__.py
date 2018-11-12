@@ -4,20 +4,16 @@ import azure.functions as func
 from ..shared import db_access_v2 as DB_Access_V2
 from azure.storage.blob import BlockBlobService, ContentSettings
 
+# TODO: Environment variables:
+# DB creds (host, name, user, pass)
+# Storage (account name, account key, source container name, destination container name)
+
+# TODO: User id as param to function
+
 default_db_host = ""
 default_db_name = ""
 default_db_user = ""
 default_db_pass = ""
-
-# TODO: Make environment variables
-storage_account_name = ""
-storage_account_key = ""
-source_container_name = ""
-destination_container_name = ""
-
-# TODO: Make environment variables
-SOURCE_CONTAINER_URL = "https://akaonboardingstorage.blob.core.windows.net/aka-temp-source-container"
-DESTINATION_CONTAINER_URL = "https://akaonboardingstorage.blob.core.windows.net/aka-temp-destination-container"
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
@@ -81,7 +77,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         file_extension = os.path.splitext(original_image_url)[1]
         image_id = value
         new_blob_name = (str(image_id) + file_extension)
-        permanent_storage_path = DESTINATION_CONTAINER_URL + "/" + new_blob_name
+        copy_from_container = os.getenv('SOURCE_CONTAINER_NAME')
+        copy_to_container = os.getenv('DESTINATION_CONTAINER_NAME')
+        permanent_storage_path = "https://{0}.blob.core.windows.net/{0}/{1}".format(copy_from_container, new_blob_name)
 
         # Verbose logging for testing
         logging.info("Original image URL: " + original_image_url)
@@ -92,32 +90,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         logging.info("Now copying file from temporary to permanent storage...")
         logging.info("Permanent image URL: " + permanent_storage_path)
 
-        blob_service = BlockBlobService(account_name=storage_account_name, account_key=storage_account_key)
-        copy_from_container = source_container_name
-        copy_to_container = destination_container_name
-
-        blob_url = blob_service.make_blob_url(copy_from_container, original_blob_name)
+        blob_service = BlockBlobService(account_name=os.getenv('STORAGE_ACCOUNT_NAME'), account_key=os.getenv('STORAGE_ACCOUNT_KEY'))
+        source_blob_url = blob_service.make_blob_url(copy_from_container, original_blob_name)
 
         # TODO: Exception handling in case blob cannot be copied for some reason.
-        blob_service.copy_blob(copy_to_container, new_blob_name, blob_url)
+        blob_service.copy_blob(copy_to_container, new_blob_name, source_blob_url)
+        logging.info("Done.")
 
         # Delete the file from temp storage once it's been copied
-        # TODO: Tested - produces errors.  Troubleshoot
-        # blob_service.delete_blob(copy_from_container, original_blob_name)
-
+        logging.info("Now deleting image " + original_blob_name + " from temp storage container.")
         try:
             blob_service.delete_blob(copy_from_container, original_blob_name)
             print("Blob " + original_blob_name + " has been deleted successfully")
         except:
             print("Blob " + original_blob_name + " deletion failed")
 
-        logging.info("Done.")
         # Add image to the list of images to be returned in the response
         permanent_url_list.append(permanent_storage_path)
         # Add ImageId and permanent storage url to new dictionary to be sent to update function
         update_urls_dictionary[image_id] = permanent_storage_path
-
-    logging.info("Done copying images to permanent blob storage.")
 
     logging.info("Now updating permanent URLs in the DB...")
     data_access.update_image_urls(update_urls_dictionary, user_id)
