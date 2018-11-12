@@ -4,11 +4,9 @@ import azure.functions as func
 from ..shared import db_access_v2 as DB_Access_V2
 from azure.storage.blob import BlockBlobService, ContentSettings
 
-# TODO: Environment variables:
-# DB creds (host, name, user, pass)
-# Storage (account name, account key, source container name, destination container name)
-
-# TODO: User id as param to function
+# TODO: User id as param to function - holding off until further discussion
+# regarding whether user ID should be generated/looked up by the CLI or
+# from within this function
 
 default_db_host = ""
 default_db_name = ""
@@ -34,6 +32,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     
     # TODO: Add check to ensure image URLs sent by client are all unique.
 
+    # TODO: Encapsulate this loop in a method
+    # TODO: Wrap method in try/catch, send an appropriate http response in the event of an error
     for url in url_list:
         # Split original image name from URL
         original_filename = url.split("/")[-1]
@@ -45,6 +45,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Append image object to the list
         image_object_list.append(image)
 
+    # TODO: Wrap db access section in try/catch, send an appropriate http response in the event of an error
     logging.info("Now connecting to database...")
     db_config = DB_Access_V2.DatabaseInfo(os.getenv('DB_HOST', default_db_host), os.getenv('DB_NAME', default_db_name), os.getenv('DB_USER', default_db_user), os.getenv('DB_PASS', default_db_pass))
     data_access = DB_Access_V2.ImageTagDataAccess(DB_Access_V2.PostGresProvider(db_config))
@@ -66,6 +67,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     update_urls_dictionary = {}
 
     # TODO: Add check to make sure image exists in temp storage before attempting these operations
+    # TODO: Put blob storage manipulation into a separate function and add to shared codebase
+    # TODO: Try/catch to distinguish among errors
     for key, value in image_id_url_map.items():
 
         # Verbose logging for testing
