@@ -30,7 +30,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         bodyJson = req.get_json()
-        logging.debug(bodyJson)
+        logging.info("Request json: {}".format(bodyJson))
         if "imageUrls" not in bodyJson:
             raise ValueError("invalid request body")
         raw_url_list = bodyJson["imageUrls"]

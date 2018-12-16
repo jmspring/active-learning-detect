@@ -1,79 +1,11 @@
 import string
 import logging
 import random
-from enum import IntEnum, unique
 import getpass
 import itertools
+import json
 from ..db_provider import DatabaseInfo, PostGresProvider
-
-
-@unique
-class ImageTagState(IntEnum):
-    NOT_READY = 0
-    READY_TO_TAG = 1
-    TAG_IN_PROGRESS = 2
-    COMPLETED_TAG = 3
-    INCOMPLETE_TAG = 4
-    ABANDONED = 5
-
-# An entity class for a VOTT image
-class ImageInfo(object):
-    def __init__(self, image_name, image_location, height, width):
-        self.image_name = image_name
-        self.image_location = image_location
-        self.height = height
-        self.width = width
-
-
-# Entity class for Tags stored in DB
-class ImageTag(object):
-    def __init__(self, image_id, x_min, x_max, y_min, y_max, classification_names):
-        self.image_id = image_id
-        self.x_min = x_min
-        self.x_max = x_max
-        self.y_min = y_min
-        self.y_max = y_max
-        self.classification_names = classification_names
-
-#This class doesn't have box and image confidence because they are human curated labels
-class AnnotatedLabel(object):
-    def __init__(self, image_id, classification_id, x_min, x_max, y_min, y_max):
-        self.image_id = image_id
-        self.x_min = x_min
-        self.x_max = x_max
-        self.y_min = y_min
-        self.y_max = y_max
-        self.classification_id = classification_id
-
-# TODO: Think about moving all this schemas to a separate file 
-class ImageLabel(object):
-    def __init__(self,image_id, imagelocation,image_height: int, image_width: int, labels: list, user_folder=None):
-        self.image_id = image_id
-        self.imagelocation = imagelocation
-        self.image_height = image_height
-        self.image_width = image_width
-        self.user_folder = user_folder
-        self.labels = labels
-
-class Tag(object):
-    def __init__(self,classificationname, x_min: float, x_max: float, y_min: float, y_max: float):
-        self.x_min = x_min
-        self.x_max = x_max
-        self.y_min = y_min
-        self.y_max = y_min
-        self.classificationname = classificationname
-
-class PredictionLabel(AnnotatedLabel):
-    def __init__(self, training_id, image_id, classification_id, x_min, x_max, y_min, y_max, 
-                image_height, image_width, box_confidence=0, image_confidence= 0):
-        super().__init__(image_id, classification_id, x_min, x_max, y_min, y_max)
-        self.training_id = training_id
-        self.image_height = image_height
-        self.image_width = image_width
-        self.box_confidence = box_confidence
-        self.image_confidence = image_confidence
-
-
+from .models import ImageTag, ImageLabel, ImageTagState, AnnotatedLabel, Tag, ImageInfo, PredictionLabel
 
 class ImageTagDataAccess(object):
     def __init__(self,  db_provider):
@@ -211,7 +143,7 @@ class ImageTagDataAccess(object):
                 for id in image_ids:
                     ids += str(id) + ','
                 ids = ids[:-1]
-                query = ("select imageid, originalimagename, imagelocation, height, width, createdbyuser from image_info where imageid IN ({0});")
+                query = ("select a.imageid, a.originalimagename, a.imagelocation, a.height, a.width, a.createdbyuser, b.TagStateId from image_info a LEFT JOIN Image_Tagging_State b ON a.imageid = b.imageid where a.imageid IN ({0});")
                 cursor.execute(query.format(ids))
                 logging.debug("Got image info back for image_id={}".format(image_ids))
 
@@ -223,6 +155,7 @@ class ImageTagDataAccess(object):
                     info['name'] = row[1]
                     info['location'] = row[2]
                     info['id'] = row[0]
+                    info['tagstate'] = row[6]
                     images_info.append(info)
             finally:
                 cursor.close()
@@ -233,49 +166,60 @@ class ImageTagDataAccess(object):
             conn.close()
         return list(images_info)
 
-
     def checkout_images(self, image_count, user_id):
         if type(image_count) is not int:
             raise TypeError('image_count must be an integer')
-        checked_out_images = []
+        image_id_to_image_labels = {}
         try:
             conn = self._db_provider.get_connection()
             try:
                 cursor = conn.cursor()
-                query = ("with pl as ( "
-                        "SELECT p.*, ci.classificationname  "
+                query = ("with pl AS ( "
+                        "SELECT p.*, ci.classificationname "
                         "FROM prediction_labels p "
                         "join classification_info ci on ci.classificationid = p.classificationid "
                         "WHERE trainingid = (select MAX(trainingid) From training_info) "
-                    ") "
-                    "select  "
+                        "), "
+                        "its AS ( "
+                        "SELECT s.imageid, ts.tagstatename, i.imagelocation,i.height,i.width "
+                        "FROM image_tagging_state s "
+                        "join image_info i on i.imageid = s.imageid "
+                        "join tag_state ts on ts.tagstateid = s.tagstateid "
+                        "WHERE s.tagstateid in ({0},{1}) LIMIT {2} "
+                        ") "
+                        "select "
                         "its.imageid, "
-                        "i.imagelocation, "
+                        "its.imagelocation, "
                         "pl.classificationid, "
                         "pl.classificationname, "
                         "pl.x_min, "
                         "pl.x_max, "
                         "pl.y_min, "
                         "pl.y_max, "
-                        "i.height, "
-                        "i.width, "
+                        "its.height, "
+                        "its.width, "
                         "pl.boxconfidence, "
                         "pl.imageconfidence, "
-                        "ts.tagstatename "
-                    "from image_tagging_state its  "
-                    "left outer join pl on its.imageid = pl.imageid "
-                    "join image_info i on i.imageid = its.imageid "
-                    "join tag_state ts on ts.tagstateid = its.tagstateid "
-                    "where  "
-                        "its.tagstateid in ({1}) "
-                    "limit {0}")
-                cursor.execute(query.format(image_count, ImageTagState.READY_TO_TAG))
+                        "its.tagstatename "
+                        "FROM its "
+                        "left outer join pl on its.imageid = pl.imageid")
+                cursor.execute(query.format(ImageTagState.READY_TO_TAG, ImageTagState.INCOMPLETE_TAG, image_count))
 
                 logging.debug("Got image tags back for image_count={0}".format(image_count))
-                # TODO: Optimize below two lines to simplify unique image ids, and improve the
-                # json output being returned, unflatten it
-                checked_out_images = list(cursor)
-                images_ids_to_update = list(set(row[0] for row in checked_out_images ))
+
+                for row in cursor:
+                    image_tag = {}
+                    # Handle the incomplete case
+                    if row[4] and row[5] and row[6] and row[7]:
+                        image_tag = ImageTag(row[0], float(row[4]), float(row[5]), float(row[6]), float(row[7]), row[3])
+                    if row[0] not in image_id_to_image_labels:
+                        image_label = ImageLabel(row[0], row[1], row[8], row[9], [image_tag])
+                        image_id_to_image_labels[row[0]] = image_label
+                    else:
+                        image_id_to_image_labels[row[0]].labels.append(image_tag)
+
+                logging.debug("Checked out images: " + str(image_id_to_image_labels))
+                images_ids_to_update = list(image_id_to_image_labels.keys())
                 self._update_images(images_ids_to_update, ImageTagState.TAG_IN_PROGRESS, user_id, conn)
             finally:
                 cursor.close()
@@ -284,8 +228,7 @@ class ImageTagDataAccess(object):
             raise
         finally:
             conn.close()
-        return checked_out_images
-
+        return list(image_id_to_image_labels.values())
 
     def get_existing_classifications(self):
         try:
@@ -368,43 +311,6 @@ class ImageTagDataAccess(object):
                 logging.error("An errors occured updating image urls: {0}".format(e))
                 raise
             finally: conn.close()
-
-    #TODO: Do safer query string formatting
-    def update_tagged_images(self,list_of_image_tags, user_id):
-        if(not list_of_image_tags):
-            return
-
-        if type(user_id) is not int:
-            raise TypeError('user id must be an integer')
-
-        groups_by_image_id = itertools.groupby(list_of_image_tags, key=lambda it:it.image_id)
-        try:
-            conn = self._db_provider.get_connection()
-            try:
-                cursor = conn.cursor()
-                for img_id, list_of_tags in groups_by_image_id:
-                    for img_tag in list(list_of_tags):
-                        query = ("with iti AS ( "
-                                "INSERT INTO image_tags (ImageId, X_Min,X_Max,Y_Min,Y_Max,CreatedByUser) "
-                                "VALUES ({0},{1},{2},{3},{4},{5}) "
-                                "RETURNING ImageTagId), "
-                                "ci AS ( "
-                                    "INSERT INTO classification_info (ClassificationName) "
-                                    "VALUES {6} "
-                                    "ON CONFLICT (ClassificationName) DO UPDATE SET ClassificationName=EXCLUDED.ClassificationName "
-                                    "RETURNING (SELECT iti.ImageTagId FROM iti), ClassificationId) "
-                                "INSERT INTO tags_classification (ImageTagId,ClassificationId) "
-                                "SELECT imagetagid,classificationid from ci;")
-                        classifications = ", ".join("('{0}')".format(name) for name in img_tag.classification_names)
-                        cursor.execute(query.format(img_tag.image_id,img_tag.x_min,img_tag.x_max,img_tag.y_min,img_tag.y_max,user_id,classifications))
-                    self._update_images([img_id],ImageTagState.COMPLETED_TAG,user_id,conn)
-                    conn.commit()
-                logging.debug("Updated {0} image tags".format(len(list_of_image_tags)))
-            finally: cursor.close()
-        except Exception as e:
-            logging.error("An errors occured updating tagged image: {0}".format(e))
-            raise
-        finally: conn.close()
 
     def get_classification_map(self, class_names: set, user_id: int) -> dict:
         class_to_id = {}
@@ -545,7 +451,6 @@ class ImageTagDataAccess(object):
 
 class ArgumentException(Exception):
     pass
-
 
 def main():
     #################################################################
